@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trợ Lý Ảo Cho Người Khiếm Thị</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- TensorFlow.js core -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"> </script>
+    <!-- Mẫu nhận diện đối tượng COCO-SSD -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"> </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Dark background */
+            color: white;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling when camera is active */
+        }
+        #camera-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+        }
+        #video-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Ensure video fills container without stretching */
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        #canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            pointer-events: none; /* Let clicks pass through canvas */
+        }
+        
+        .ui-layer {
+            position: absolute;
+            z-index: 30;
+            padding: 1rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .top-bar {
+            top: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
+            padding-top: 1.5rem;
+        }
+        .bottom-bar {
+            bottom: 0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%);
+            padding-bottom: 2rem;
+            height: 120px;
+        }
+        .status-badge {
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #ef4444; /* Red by default */
+            box-shadow: 0 0 8px #ef4444;
+        }
+        .status-dot.active {
+            background-color: #10b981; /* Green when active */
+            box-shadow: 0 0 8px #10b981;
+        }
+        .status-dot.loading {
+            background-color: #f59e0b; /* Yellow when loading */
+            box-shadow: 0 0 8px #f59e0b;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
+        }
+
+        .main-btn {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 72px;
+            height: 72px;
+            font-size: 1.5rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.5);
+            transition: transform 0.2s, background-color 0.2s;
+        }
+        .main-btn:hover {
+            transform: scale(1.05);
+            background-color: #2563eb;
+        }
+        .main-btn:active {
+            transform: scale(0.95);
+        }
+        .main-btn.stop {
+            background-color: #ef4444;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.5);
+        }
+        .main-btn.stop:hover {
+            background-color: #dc2626;
+        }
+        .warning-text {
+            background-color: rgba(239, 68, 68, 0.8);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        #message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(31, 41, 55, 0.95);
+            padding: 2rem;
+            border-radius: 1rem;
+            text-align: center;
+            z-index: 50;
+            max-width: 80%;
+            border: 1px solid rgba(255,255,255,0.1);
+            display: none; /* Hidden by default */
+            flex-direction: column;
+            gap: 1rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #111827;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Màn hình chờ tải model AI -->
+    <div id="loading-screen" class="loading-overlay">
+        <div class="spinner"></div>
+        <h2 class="text-xl font-bold">Đang khởi tạo Trí Tuệ Nhân Tạo...</h2>
+        <p class="text-gray-400 text-sm">Vui lòng chờ trong giây lát</p>
+    </div>
+
+    <!-- Hộp thoại thông báo -->
+    <div id="message-box">
+        <i class="fas fa-exclamation-circle text-4xl text-yellow-400 mb-2"></i>
+        <h3 id="msg-title" class="text-xl font-bold">Thông báo</h3>
+        <p id="msg-content" class="text-gray-300">Nội dung thông báo.</p>
+        <button id="msg-btn" class="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded transition">Đã hiểu</button>
+    </div>
+
+    <div id="camera-container">
+        <!-- Video stream từ camera -->
+        <video id="video-feed" autoplay playsinline muted></video>
+        <!-- Canvas dùng để vẽ các khung nhận diện vật thể -->
+        <canvas id="canvas-overlay"></canvas>
+        
+        <!-- UI Lớp trên cùng -->
+        <div class="ui-layer top-bar">
+            <div class="status-badge">
+                <div id="status-indicator" class="status-dot"></div>
+                <span id="status-text">Camera Tắt</span>
+            </div>
+            <div class="status-badge" style="background-color: rgba(59, 130, 246, 0.3);">
+                <i class="fas fa-volume-up text-blue-400"></i>
+                <span id="voice-status">Sẵn sàng</span>
+            </div>
+        </div>
+
+        <div class="ui-layer bottom-bar">
+            <!-- Nút Bật/Tắt Camera và Phân tích -->
+            <button id="toggle-btn" class="main-btn" aria-label="Bật hoặc Tắt hệ thống nhận diện">
+                <i id="btn-icon" class="fas fa-power-off"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const video = document.getElementById('video-feed');
+        const canvas = document.getElementById('canvas-overlay');
+        const ctx = canvas.getContext('2d');
+        const toggleBtn = document.getElementById('toggle-btn');
+        const btnIcon = document.getElementById('btn-icon');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const loadingScreen = document.getElementById('loading-screen');
+        const msgBox = document.getElementById('message-box');
+        const msgTitle = document.getElementById('msg-title');
+        const msgContent = document.getElementById('msg-content');
+        const msgBtn = document.getElementById('msg-btn');
+        const voiceStatus = document.getElementById('voice-status');
+
+        // State variables
+        let isRunning = false;
+        let model = null;
+        let animationId = null;
+        let stream = null;
+        
+        // Throttling speech to prevent overlapping announcements
+        let isSpeaking = false;
+        let lastSpokenObject = "";
+        let lastSpokenTime = 0;
+        const SPEECH_DELAY_MS = 3000; // Đợi 3s trước khi nói lại cùng một vật
+
+        // Từ điển dịch tên vật thể từ tiếng Anh (COCO-SSD) sang tiếng Việt
+        const objectDictionary = {
+            'person': 'người',
+            'bicycle': 'xe đạp',
+            'car': 'ô tô',
+            'motorcycle': 'xe máy',
+            'airplane': 'máy bay',
+            'bus': 'xe buýt',
+            'train': 'tàu hỏa',
+            'truck': 'xe tải',
+            'boat': 'thuyền',
+            'traffic light': 'đèn giao thông',
+            'fire hydrant': 'vòi nước cứu hỏa',
+            'stop sign': 'biển báo dừng',
+            'parking meter': 'đồng hồ đỗ xe',
+            'bench': 'ghế đá',
+            'bird': 'con chim',
+            'cat': 'con mèo',
+            'dog': 'con chó',
+            'horse': 'con ngựa',
+            'sheep': 'con cừu',
+            'cow': 'con bò',
+            'elephant': 'con voi',
+            'bear': 'con gấu',
+            'zebra': 'ngựa vằn',
+            'giraffe': 'hươu cao cổ',
+            'backpack': 'ba lô',
+            'umbrella': 'cái ô',
+            'handbag': 'túi xách',
+            'tie': 'cà vạt',
+            'suitcase': 'vali',
+            'frisbee': 'đĩa ném',
+            'skis': 'ván trượt tuyết',
+            'snowboard': 'ván trượt tuyết',
+            'sports ball': 'quả bóng',
+            'kite': 'cái diều',
+            'baseball bat': 'gậy bóng chày',
+            'baseball glove': 'găng tay bóng chày',
+            'skateboard': 'ván trượt',
+            'surfboard': 'ván lướt sóng',
+            'tennis racket': 'vợt tennis',
+            'bottle': 'cái chai',
+            'wine glass': 'ly rượu',
+            'cup': 'cái cốc',
+            'fork': 'cái nĩa',
+            'knife': 'con dao',
+            'spoon': 'cái thìa',
+            'bowl': 'cái bát',
+            'banana': 'quả chuối',
+            'apple': 'quả táo',
+            'sandwich': 'bánh mì kẹp',
+            'orange': 'quả cam',
+            'broccoli': 'súp lơ',
+            'carrot': 'củ cà rốt',
+            'hot dog': 'bánh mì xúc xích',
+            'pizza': 'bánh pizza',
+            'donut': 'bánh donut',
+            'cake': 'bánh ngọt',
+            'chair': 'cái ghế',
+            'couch': 'ghế sofa',
+            'potted plant': 'cây chậu',
+            'bed': 'cái giường',
+            'dining table': 'bàn ăn',
+            'toilet': 'bồn cầu',
+            'tv': 'tivi',
+            'laptop': 'máy tính xách tay',
+            'mouse': 'con chuột',
+            'remote': 'điều khiển',
+            'keyboard': 'bàn phím',
+            'cell phone': 'điện thoại',
+            'microwave': 'lò vi sóng',
+            'oven': 'lò nướng',
+            'toaster': 'máy nướng bánh mì',
+            'sink': 'bồn rửa',
+            'refrigerator': 'tủ lạnh',
+            'book': 'quyển sách',
+            'clock': 'cái đồng hồ',
+            'vase': 'cái lọ',
+            'scissors': 'cái kéo',
+            'teddy bear': 'gấu bông',
+            'hair drier': 'máy sấy tóc',
+            'toothbrush': 'bàn chải đánh răng'
+        };
+
+        function showMessage(title, content) {
+            msgTitle.textContent = title;
+            msgContent.textContent = content;
+            msgBox.style.display = 'flex';
+        }
+
+        msgBtn.addEventListener('click', () => {
+            msgBox.style.display = 'none';
+        });
+
+        // Hàm phát giọng nói cảnh báo
+        function speak(text) {
+            if (!window.speechSynthesis) {
+                console.warn("Trình duyệt không hỗ trợ Web Speech API.");
+                return;
+            }
+            if (isSpeaking) return;
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'vi-VN'; // Set language to Vietnamese
+            utterance.rate = 1.1; // Hơi nhanh một chút
+            
+            utterance.onstart = () => {
+                isSpeaking = true;
+                voiceStatus.textContent = "Đang phát...";
+                voiceStatus.classList.add('text-green-400');
+            };
+            
+            utterance.onend = () => {
+                isSpeaking = false;
+                voiceStatus.textContent = "Sẵn sàng";
+                voiceStatus.classList.remove('text-green-400');
+            };
+
+            utterance.onerror = (e) => {
+                console.error("Lỗi phát âm:", e);
+                isSpeaking = false;
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Đảm bảo canvas luôn khớp với kích thước video
+        function resizeCanvas() {
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                // Căn chỉnh canvas sao cho trùng khớp với video đang bị object-fit: cover
+                const containerRatio = canvas.parentElement.clientWidth / canvas.parentElement.clientHeight;
+                const videoRatio = video.videoWidth / video.videoHeight;
+                
+                if (containerRatio > videoRatio) {
+                    canvas.style.width = '100%';
+                    canvas.style.height = 'auto';
+                } else {
+                    canvas.style.width = 'auto';
+                    canvas.style.height = '100%';
+                }
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        video.addEventListener('loadedmetadata', resizeCanvas);
+
+        async function initAI() {
+            try {
+                // Tải model COCO-SSD từ TensorFlow.js
+                model = await cocoSsd.load();
+                console.log("Model AI đã tải thành công.");
+                loadingScreen.style.display = 'none';
+            } catch (error) {
+                console.error("Lỗi tải model:", error);
+                loadingScreen.innerHTML = `
+                    <i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-2"></i>
+                    <h2 class="text-xl font-bold">Lỗi khởi tạo AI</h2>
+                    <p class="text-gray-400 text-sm mt-2">Vui lòng tải lại trang hoặc kiểm tra kết nối mạng.</p>
+                `;
+            }
+        }
+
+        // Vòng lặp phân tích khung hình video
+        async function detectObjects() {
+            if (!isRunning || !model || video.readyState < 2) {
+                if(isRunning) {
+                    animationId = requestAnimationFrame(detectObjects);
+                }
+                return;
+            }
+
+            try {
+                // Phân tích vật thể trong khung hình hiện tại
+                const predictions = await model.detect(video);
+                
+                // Xóa khung vẽ cũ
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                let foundImportantObject = false;
+
+                // Duyệt qua các vật thể nhận diện được
+                predictions.forEach(prediction => {
+                    const [x, y, width, height] = prediction.bbox;
+                    const objectNameEn = prediction.class;
+                    const objectNameVi = objectDictionary[objectNameEn] || objectNameEn;
+                    const confidence = Math.round(prediction.score * 100);
+
+                    // Chỉ xử lý những vật thể có độ tin cậy > 50%
+                    if (confidence > 50) {
+                        foundImportantObject = true;
+
+                        // Tính toán vị trí tương đối của vật thể trên màn hình
+                        const centerX = x + (width / 2);
+                        let positionStr = "phía trước";
+                        if (centerX < canvas.width * 0.33) {
+                            positionStr = "bên trái";
+                        } else if (centerX > canvas.width * 0.66) {
+                            positionStr = "bên phải";
+                        }
+
+                        // Vẽ khung (Bounding Box)
+                        ctx.strokeStyle = '#ef4444'; // Red bounding box
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(x, y, width, height);
+
+                        // Vẽ nhãn văn bản cảnh báo
+                        const labelText = `Chú ý vật cản: ${objectNameVi} (${positionStr})`;
+                        ctx.font = 'bold 18px Inter, sans-serif';
+                        ctx.fillStyle = 'rgba(239, 68, 68, 0.9)'; // Red background for text
+                        
+                        // Tính toán chiều rộng văn bản để vẽ nền
+                        const textWidth = ctx.measureText(labelText).width;
+                        ctx.fillRect(x, y > 30 ? y - 30 : 0, textWidth + 10, 30);
+                        
+                        ctx.fillStyle = '#ffffff'; // White text
+                        ctx.fillText(labelText, x + 5, y > 30 ? y - 8 : 22);
+
+                        // Logic phát âm thanh cảnh báo
+                        const currentTime = new Date().getTime();
+                        // Tránh việc nói liên tục một vật. Nếu là vật mới, hoặc đã qua 3s
+                        if (objectNameVi !== lastSpokenObject || (currentTime - lastSpokenTime > SPEECH_DELAY_MS)) {
+                            speak(`Chú ý, có ${objectNameVi} ${positionStr}`);
+                            lastSpokenObject = objectNameVi;
+                            lastSpokenTime = currentTime;
+                        }
+                    }
+                });
+
+                // Vẽ chỉ dẫn đường đi (Mô phỏng đơn giản một đường thẳng an toàn nếu không có vật cản ngay giữa)
+                if (!foundImportantObject || (foundImportantObject && (lastSpokenObject !== 'người' && lastSpokenObject !== 'ô tô' && lastSpokenObject !== 'xe máy'))) {
+                     // Nếu đường có vẻ thoáng, vẽ một đường màu xanh hướng dẫn
+                     ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)'; // Mờ xanh lá
+                     ctx.lineWidth = 20;
+                     ctx.lineCap = 'round';
+                     ctx.beginPath();
+                     ctx.moveTo(canvas.width / 2, canvas.height); // Bắt đầu từ giữa cạnh dưới
+                     ctx.lineTo(canvas.width / 2, canvas.height * 0.4); // Hướng lên giữa
+                     ctx.stroke();
+
+                     ctx.fillStyle = 'rgba(16, 185, 129, 0.9)';
+                     ctx.font = 'bold 20px Inter';
+                     ctx.fillText("Hướng đi an toàn", (canvas.width / 2) - 80, canvas.height * 0.35);
+                }
+
+            } catch (error) {
+                console.error("Lỗi trong quá trình nhận diện:", error);
+            }
+
+            // Tiếp tục vòng lặp
+            if (isRunning) {
+                animationId = requestAnimationFrame(detectObjects);
+            }
+        }
+
+        async function startCamera() {
+            statusIndicator.className = 'status-dot loading';
+            statusText.textContent = 'Đang mở camera...';
+
+            try {
+                // Yêu cầu quyền truy cập camera (ưu tiên camera sau trên thiết bị di động)
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' },
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                
+                // Đợi video thực sự bắt đầu phát
+                video.onplaying = () => {
+                    resizeCanvas();
+                    isRunning = true;
+                    statusIndicator.className = 'status-dot active';
+                    statusText.textContent = 'Hệ thống đang hoạt động';
+                    
+                    toggleBtn.classList.add('stop');
+                    btnIcon.className = 'fas fa-stop';
+                    
+                    speak("Hệ thống cảnh báo vật cản đã được bật.");
+                    
+                    // Bắt đầu vòng lặp phân tích AI
+                    detectObjects();
+                };
+
+            } catch (err) {
+                console.error("Lỗi truy cập camera:", err);
+                statusIndicator.className = 'status-dot';
+                statusText.textContent = 'Lỗi Camera';
+                showMessage("Lỗi Camera", "Không thể truy cập camera. Vui lòng cấp quyền truy cập camera cho trang web này trong cài đặt trình duyệt.");
+            }
+        }
+
+        function stopSystem() {
+            isRunning = false;
+            
+            // Dừng vòng lặp requestAnimationFrame
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            
+            // Dừng video stream
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            
+            // Xóa canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Dừng giọng nói nếu đang phát
+            window.speechSynthesis.cancel();
+            isSpeaking = false;
+            
+            statusIndicator.className = 'status-dot';
+            statusText.textContent = 'Camera Tắt';
+            
+            toggleBtn.classList.remove('stop');
+            btnIcon.className = 'fas fa-power-off';
+            
+            speak("Đã tắt hệ thống cảnh báo.");
+        }
+
+        // Xử lý sự kiện click nút chính
+        toggleBtn.addEventListener('click', () => {
+            if (isRunning) {
+                stopSystem();
+            } else {
+                if (!model) {
+                    showMessage("Chưa sẵn sàng", "Mô hình Trí tuệ nhân tạo đang được tải. Vui lòng chờ trong giây lát.");
+                    return;
+                }
+                startCamera();
+            }
+        });
+
+        // Bắt đầu tải model khi trang web được mở
+        window.onload = initAI;
+
+    </script>
+</body>
+</html>
